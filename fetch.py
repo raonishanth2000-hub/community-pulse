@@ -1,18 +1,17 @@
-# fetch.py - Stage 1 of Community Pulse.
-# Downloads the latest 300 issues and PRs from a GitHub repo, plus their
-# comments and reviews, and saves them to cache.json.
-# Usage: python3 fetch.py [owner/repo] [--refresh]
+# fetch.py - Stage 1 of Community Pulse: downloads the latest 300 issues and PRs of any
+# public repo, plus their comments and reviews, and saves them to that repo's cache file.
+# Command line: python3 fetch.py [owner/repo] [--refresh]
+# From other code: from fetch import fetch_repo, then items = fetch_repo("owner/repo")
 
+import string
 import sys
 from datetime import datetime, timezone
 
-from cache_file import cache_exists, load_cache, print_summary, save_cache
-from github_api import get_json, read_token
+from cache_file import DEFAULT_REPO, cache_exists, load_cache, print_summary, save_cache
+from fetch_steps import fetch_all_replies, fetch_item_list, tell
+from github_api import read_token
 
-DEFAULT_REPO = "fastapi/fastapi"
-MAX_ITEMS = 300
-PAGES = 3
-LOW_RATE_LIMIT = 20  # stop when GitHub says fewer calls than this are left
+ALLOWED_CHARACTERS = string.ascii_letters + string.digits + ".-_"
 
 
 # Reads the command line. In: nothing. Out: repo name, and True/False for --refresh.
@@ -27,97 +26,63 @@ def read_settings():
     return repo, refresh
 
 
-# Gets the newest issues and PRs, up to 3 pages of 100.
-# In: repo and token. Out: list of raw items, calls left, and True if nothing went wrong.
-def fetch_item_list(repo, token):
-    items = []
-    calls_left = 5000
-    for page in range(1, PAGES + 1):
-        path = "/repos/" + repo + "/issues?state=all&per_page=100&page=" + str(page)
-        data, calls_left = get_json(path + "&sort=created&direction=desc", token)
-        if data is None:
-            return items, calls_left, False
-        items.extend(data)
-        print("Fetched page " + str(page) + " of " + str(PAGES))
-        if len(data) < 100 or len(items) >= MAX_ITEMS or calls_left < LOW_RATE_LIMIT:
-            break
-    return items[:MAX_ITEMS], calls_left, calls_left >= LOW_RATE_LIMIT
+# Checks a repo name is safe to use: exactly owner/name, using only letters,
+# digits, dots, dashes and underscores. "." and ".." are refused because in
+# paths and web addresses they mean "this folder" and "go up a folder".
+# In: text. Out: True or False.
+def is_valid_repo(text):
+    parts = text.split("/")
+    if len(parts) != 2:
+        return False
+    for part in parts:
+        if part == "" or part == "." or part == "..":
+            return False
+        for character in part:
+            if character not in ALLOWED_CHARACTERS:
+                return False
+    return True
 
 
-# Gets the login name and account type (User or Bot) of a GitHub user.
-# In: user data (empty for deleted accounts). Out: login and type.
-def describe_user(user):
-    if user is None:
-        return "ghost", "User"
-    return user["login"], user["type"]
+# The whole fetch as one function other code can call. Uses saved data unless refresh is True.
+# In: repo, optional progress function, optional refresh. Out: the list of items.
+# Raises an error with a plain-English message if anything goes wrong; if it stops
+# halfway, what we got so far is saved first.
+def fetch_repo(repo, progress=None, refresh=False):
+    if not is_valid_repo(repo):
+        raise ValueError("'" + repo + "' is not a valid repo name. Use owner/name, like fastapi/fastapi.")
+    repo = repo.lower()  # GitHub ignores capitals, so FastAPI/FastAPI and fastapi/fastapi are the same
+    if cache_exists(repo) and not refresh:
+        tell(progress, 1, 1, "Using saved data for " + repo + " (refresh to fetch again)")
+        return load_cache(repo)["items"]
+    token = read_token()
+    raw_items, calls_left = fetch_item_list(repo, token, progress)
+    if len(raw_items) == 0:
+        raise RuntimeError("GitHub returned no issues or pull requests for " + repo
+                           + ". It may have none yet, or have issues turned off.")
+    items, problem = fetch_all_replies(repo, token, raw_items, calls_left, progress)
+    save_cache({"repo": repo, "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "complete": problem is None, "items": items})
+    if problem is not None:
+        raise RuntimeError(problem + ". Saved the " + str(len(items)) + " items fetched so far.")
+    return items
 
 
-# Keeps only the fields we need from one issue or PR. In: raw item. Out: small dictionary.
-# An item is a PR if GitHub gave it a "pull_request" field.
-def simplify_item(raw):
-    login, user_type = describe_user(raw["user"])
-    return {"number": raw["number"], "title": raw["title"],
-            "is_pr": "pull_request" in raw, "author": login,
-            "author_association": raw["author_association"],
-            "created_at": raw["created_at"], "state": raw["state"],
-            "draft": raw.get("draft", False), "comments": [], "reviews": []}
+# Prints progress on the command line: every page, then every 25 items, so it doesn't flood.
+# In: steps done, total steps, message. Out: nothing (it prints).
+def print_progress(done, total, message):
+    if "page" in message or done % 25 == 0 or done == total:
+        print(message)
 
 
-# Fetches the comments (and reviews, for PRs) of one item.
-# In: repo, token, raw item. Out: simplified item (None if a call failed) and calls left.
-def fetch_replies(repo, token, raw, calls_left):
-    item = simplify_item(raw)
-    number = str(item["number"])
-    if raw["comments"] > 0:
-        data, calls_left = get_json("/repos/" + repo + "/issues/" + number + "/comments?per_page=100", token)
-        if data is None:
-            return None, calls_left
-        for comment in data:
-            login, user_type = describe_user(comment["user"])
-            item["comments"].append({"login": login, "user_type": user_type,
-                                     "created_at": comment["created_at"]})
-    if item["is_pr"]:
-        data, calls_left = get_json("/repos/" + repo + "/pulls/" + number + "/reviews?per_page=100", token)
-        if data is None:
-            return None, calls_left
-        for review in data:
-            login, user_type = describe_user(review["user"])
-            item["reviews"].append({"login": login, "user_type": user_type,
-                                    "state": review["state"], "submitted_at": review.get("submitted_at")})
-    return item, calls_left
-
-
-# Runs every step: use the cache if we can, otherwise fetch, save, and summarise.
+# Command line: fetch the repo, print plain-English errors, then print a summary.
 def main():
     repo, refresh = read_settings()
-    if cache_exists() and not refresh:
-        cache = load_cache()
-        if cache["repo"] == repo:
-            print("Using saved cache.json (run with --refresh to fetch again).")
-            print_summary(cache)
-            return
-        print("cache.json is for " + cache["repo"] + ", so fetching " + repo + " instead.")
-    token = read_token()
-    raw_items, calls_left, complete = fetch_item_list(repo, token)
-    if len(raw_items) == 0:
-        print("Nothing was fetched, so nothing was saved.")
+    try:
+        fetch_repo(repo, print_progress, refresh)
+    except (RuntimeError, ValueError) as error:
+        print("Error: " + str(error))
         sys.exit(1)
-    items = []
-    for raw in raw_items:
-        if calls_left < LOW_RATE_LIMIT:
-            print("Rate limit almost used up. Stopping early and saving what we have.")
-            break
-        item, calls_left = fetch_replies(repo, token, raw, calls_left)
-        if item is None:
-            print("Stopping early and saving what we have.")
-            break
-        items.append(item)
-        if len(items) % 25 == 0 or len(items) == len(raw_items):
-            print("Fetched replies for " + str(len(items)) + " of " + str(len(raw_items)))
-    cache = {"repo": repo, "fetched_at": datetime.now(timezone.utc).isoformat(),
-             "complete": complete and len(items) == len(raw_items), "items": items}
-    save_cache(cache)
-    print_summary(cache)
+    print_summary(load_cache(repo))
 
 
 if __name__ == "__main__":

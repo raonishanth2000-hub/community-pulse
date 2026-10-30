@@ -5,3 +5,5 @@ cache.json
 __pycache__/
 # macOS folder files
 .DS_Store
+# One cache file per repo, re-created with: python3 fetch.py owner/repo --refresh
+cache_*.json

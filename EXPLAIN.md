@@ -1,44 +1,65 @@
 # How fetch.py works
 
-`fetch.py` downloads the newest 300 issues and pull requests (PRs) from one GitHub
-repo, along with who replied to them and when, and saves it all to `cache.json`.
-Later stages (the dashboard and the Discord digest) only read `cache.json`, so
-they never need to talk to GitHub themselves.
+`fetch.py` downloads the newest 300 issues and pull requests (PRs) from **any public
+GitHub repo**, along with who replied to them and when. It saves them to that repo's own
+cache file, for example `cache_fastapi__fastapi.json` for fastapi/fastapi. Later stages
+only read cache files, so they never need to talk to GitHub themselves.
 
-The code is split into three small files so each one stays short:
+The code is split into small files so each one stays short:
 
 | File | Job |
 |---|---|
-| `fetch.py` | The main script: decides what to download and in what order. |
+| `fetch.py` | The part people use: checks the repo name, runs the whole fetch (`fetch_repo`), and the command line. |
+| `fetch_steps.py` | The download steps: the list of issues/PRs, then each one's comments and reviews. |
+| `simplify.py` | Turns GitHub's big replies into the small dictionaries we save. |
 | `github_api.py` | Talks to GitHub: the token, the requests, the error messages. |
-| `cache_file.py` | Saves, loads and summarises `cache.json`. |
-| `metrics.py` | Stage 2: works out wait times and contributor numbers from `cache.json`. |
+| `cache_file.py` | Saves, loads, lists and summarises the cache files. |
+| `metrics.py` | Stage 2: works out wait times and contributor numbers from the cache. |
 | `metric_helpers.py` | Small building blocks for `metrics.py` (times, bots, first reply). |
 | `report_helpers.py` | Prints the results of `metrics.py`, 3 hand-check samples and a plain-English summary. |
-| `data_overview.py` | Shows what's really in `cache.json`: association counts and the date range. |
+| `data_overview.py` | Shows what's really in the cache: association counts and the date range. |
 | `health.py` | Turns the metrics into one 0-100 health score. |
 | `health_helpers.py` | The small calculations behind the health score. |
+| `priority.py` | Stage 5: sorts open items into three maintainer queues with next actions. |
+| `priority_helpers.py` | Small facts about one item used by `priority.py` (reason, next action). |
+| `config.json` | Settings you edit by hand, such as which labels count as priority. |
 
 ## Running it
 
 ```
 pip install requests python-dotenv
 echo "GITHUB_TOKEN=your_token_here" > .env
-python3 fetch.py                    # fastapi/fastapi, uses cache.json if it exists
-python3 fetch.py pallets/flask      # a different repo
-python3 fetch.py --refresh          # ignore cache.json and download again
+python3 fetch.py                                  # fastapi/fastapi, uses saved data if there is any
+python3 fetch.py simonw/datasette-cluster-map     # any public repo, saved to its own file
+python3 fetch.py pallets/flask --refresh          # ignore saved data and download again
 ```
 
-A full fetch makes about 400 to 600 requests and took about 9 minutes for
-fastapi/fastapi. Run it before the demo, not during it.
+**Try a small repo first.** `simonw/datasette-cluster-map` has about 57 issues and PRs, so
+it finishes in under a minute. A big repo like fastapi/fastapi makes 400 to 600 requests
+and takes about 9 minutes, so run it before the demo, not during it.
+
+**From other Python code** (for example a dashboard):
+
+```python
+from fetch import fetch_repo
+from cache_file import list_cached_repos
+
+items = fetch_repo("simonw/datasette-cluster-map")         # uses saved data if there is any
+items = fetch_repo("pallets/flask", refresh=True)          # always download again
+print(list_cached_repos())                                 # ['fastapi/fastapi', 'simonw/...']
+```
+
+`metrics.py`, `health.py` and `priority.py` still read **fastapi/fastapi** (the default
+repo), because they call `load_cache()` without saying which repo.
 
 ## The big picture
 
-1. Read the settings (which repo, and whether `--refresh` was passed).
-2. If `cache.json` already has this repo and you didn't pass `--refresh`, just print its summary and stop.
-3. Otherwise download 3 pages of 100 issues/PRs.
+1. Check the repo name is safe (`owner/name`).
+2. If that repo already has a cache file and you didn't ask to refresh, use it and stop.
+3. Otherwise download up to 3 pages of 100 issues/PRs.
 4. For each one, download its comments, and for PRs its reviews too.
-5. Save to `cache.json` and print a summary.
+5. Save to the repo's cache file. If anything went wrong halfway, save what we got first,
+   then report the problem in plain English.
 
 ## fetch.py
 
@@ -47,63 +68,131 @@ fastapi/fastapi. Run it before the demo, not during it.
 and any other word is treated as the repo name. With no words, the repo is
 `fastapi/fastapi`. It returns two things: the repo name and `True`/`False` for refresh.
 
-**`fetch_item_list(repo, token)`** downloads the list of issues and PRs. GitHub
-returns at most 100 per request ("page"), so we ask for page 1, 2 and 3. We stop
-early if a page has fewer than 100 items (the repo has no more), if we already have
-300, or if we are nearly out of API calls. It returns the list, how many API calls
-GitHub says we have left, and `True` if every page came back fine. GitHub's
+**`is_valid_repo(text)`** is a safety check before the name goes into a web address or a
+file name. It's `True` only if the text is exactly two parts joined by one `/`, and each
+part is made only of letters, digits, dots, dashes and underscores. So `fastapi/fastapi`
+passes, but `fastapi`, `a/b/c`, `owner/re po` and `owner/repo;rm` fail. Parts that are just
+`.` or `..` also fail, because in paths and web addresses they mean "this folder" and "go up
+a folder". That stops anyone from tricking the program into reading or writing somewhere else.
+
+**`fetch_repo(repo, progress=None, refresh=False)`** is the whole fetch as one function that
+other code can call. It checks the name, then uses saved data if there is any (unless
+`refresh` is `True`). Otherwise it reads the token, downloads everything, saves it and
+returns the list of items. `progress` is optional: if you pass a function, it gets called
+after every step as `progress(done, total, message)`, for example
+`progress(25, 57, "Fetched replies for 25 of 57")`, which a dashboard could use for a progress
+bar. If something goes wrong, it **raises** an error with a plain-English message instead of
+crashing with a confusing one. If the problem happens halfway, it saves what it has first
+(marked `"complete": false`).
+
+**`print_progress(done, total, message)`** is the progress function the command line uses. It
+prints every page, then only every 25 items, so the screen doesn't fill up.
+
+**`main()`** is the command line. It calls `fetch_repo` with `print_progress`. If an error is
+raised, it prints `Error: ` and the plain-English message, then exits. Otherwise it prints
+the summary.
+
+## fetch_steps.py
+
+**`tell(progress, done, total, message)`** passes a progress update on, but only if someone
+gave us a progress function. This saves writing "if progress is not None" everywhere.
+
+**`fetch_item_list(repo, token, progress)`** downloads the list of issues and PRs. GitHub
+returns at most 100 per request ("page"), so we ask for page 1, 2 and 3. We stop early if a
+page has fewer than 100 items (the repo has no more) or if we already have 300. GitHub's
 "issues" list includes PRs too, which is why one request gets both.
+
+**`fetch_replies(repo, token, raw, calls_left)`** fills in the `comments` and `reviews` lists
+for one item. GitHub tells us how many comments an item has, so we only ask for comments when
+that number is above 0, which saves requests. For PRs we always ask for reviews, because the
+comment count doesn't include them. For each comment we keep who wrote it, whether they're a
+bot and when. For each review we also keep its state (`APPROVED`, `CHANGES_REQUESTED`,
+`COMMENTED`).
+
+**`fetch_all_replies(repo, token, raw_items, calls_left, progress)`** runs `fetch_replies` on
+every item. Before each one it checks how many API calls are left: GitHub allows 5,000 an hour,
+and if fewer than 20 are left we stop cleanly. If GitHub returns an error, we catch it
+(`try` / `except`) and stop. Either way, it returns the items finished so far and a message
+saying what went wrong (or `None` if nothing did), so `fetch_repo` can save them. Items that
+never got their replies downloaded are left out on purpose, so they don't look like "nobody
+replied".
+
+## simplify.py
+
+These functions used to be in `fetch.py`. They moved here when Stage 5 added new
+fields, so that `fetch.py` stays short.
 
 **`describe_user(user)`** pulls out two facts about a person: their login name and
 whether the account is a `User` or a `Bot`. If someone deleted their GitHub account,
 GitHub sends nothing (`None`), so we call them `"ghost"`, which is what the GitHub
 website shows.
 
+**`label_names(raw)`** GitHub sends each label as a small dictionary (name, colour,
+description). This keeps just the names, such as `["bug", "docs"]`.
+
+**`short_body(raw)`** keeps the first 800 characters of the issue or PR text, which is
+enough to see what it's about without making the cache file huge. If the author left it
+blank, GitHub sends `None`, and we save an empty string `""` instead.
+
 **`simplify_item(raw)`** GitHub sends dozens of fields per issue. This keeps only
 the ones we need: number, title, whether it's a PR, the author, their
-`author_association` (for example `NONE` or `FIRST_TIME_CONTRIBUTOR` for newcomers,
-or `MEMBER` for maintainers), when it was created, open/closed state, and whether a
-PR is a draft. An item is a PR if GitHub included a `pull_request` field in it.
-It also starts two empty lists, `comments` and `reviews`, to be filled in next.
-
-**`fetch_replies(repo, token, raw, calls_left)`** fills in those two lists for one
-item. GitHub tells us how many comments an item has, so we only ask for comments
-when that number is above 0, which saves requests. For PRs we always ask for reviews,
-because the comment count doesn't include them. For each comment we keep who wrote it,
-whether they're a bot and when. For each review we also keep its state (`APPROVED`,
-`CHANGES_REQUESTED`, `COMMENTED`). If a request fails it returns `None`, so
-`main` knows to stop.
-
-**`main()`** runs the steps in order. In the reply loop it checks `calls_left`
-before each item. GitHub allows 5,000 calls an hour, and if fewer than 20 are left
-we stop cleanly instead of crashing, then save what we have. Every 25 items it prints
-progress. At the end it builds the dictionary we save: the repo name, when we
-fetched, a `complete` flag (`False` if we stopped early) and the list of items.
-Items that never got their replies downloaded are left out on purpose. Otherwise
-they would look like "nobody replied", which would make the numbers look worse than
-they really are.
+`author_association` (for example `NONE` for outsiders, or `MEMBER` for maintainers),
+when it was created and last updated (`updated_at`), open/closed state, whether a PR
+is a draft, its label names, and the first 800 characters of its text. An item is a PR
+if GitHub included a `pull_request` field in it. It also starts two empty lists,
+`comments` and `reviews`, which `fetch_replies` in `fetch_steps.py` fills in.
 
 ## github_api.py
 
-**`read_token()`** uses `python-dotenv` to load the `.env` file, then reads
-`GITHUB_TOKEN`. If it's missing, it prints how to fix that and exits. The token is
-only ever put into the request header. It is never printed or saved, and `.env` is
-listed in `.gitignore` so it can't be committed by accident.
+**`read_token()`** uses `python-dotenv` to load the `.env` file in the project folder (the
+same folder as `github_api.py`, wherever you run the program from), then reads
+`GITHUB_TOKEN`. If it's missing, it raises an error saying how to fix that. The token is only
+ever put into the request header. It is never printed or saved, and `.env` is listed in
+`.gitignore` so it can't be committed by accident.
 
 **`explain_error(status_code)`** turns GitHub's error numbers into plain words:
-401 means a bad token, 403 means rate limited or no access, and 404 means a wrong
-repo name.
 
-**`get_json(path, token)`** is the only place we contact GitHub, and it only ever
-does GET (read) requests. It waits 0.1 seconds first so we don't hammer GitHub, then
-sends the request with our token. On success it returns the data and the
-`X-RateLimit-Remaining` header (how many calls we have left this hour). On any
-failure it prints the plain-English reason and returns `None`.
+| Code | Message |
+|---|---|
+| 401 | Bad GitHub token |
+| 403 or 429 | GitHub rate limit reached, try again later |
+| 404 | Repo not found, or it is private |
+
+GitHub answers 404 for private repos your token can't see, as well as for repos that don't
+exist, so the message mentions both.
+
+**`get_json(path, token)`** is the only place we contact GitHub, and it only ever does GET
+(read) requests. It waits 0.1 seconds first so we don't hammer GitHub, then sends the request
+with our token. On success it returns the data and the `X-RateLimit-Remaining` header (how many
+calls we have left this hour). On failure it **raises** an error with the plain-English
+message, so whoever called it decides how to show it.
 
 ## cache_file.py
 
-**`cache_exists()`**, **`load_cache()`** and **`save_cache(cache)`** check for,
-read and write `cache.json`. `indent=2` makes the file readable by people too.
+Each repo gets its own cache file. Before this, everything went into one `cache.json`, which
+only held one repo at a time.
+
+**`cache_path(repo)`** builds the file name: `fastapi/fastapi` becomes
+`cache_fastapi__fastapi.json`. A file name can't contain `/`, so we use two underscores
+instead. GitHub usernames can't contain underscores, so the first `__` always marks where the
+owner ends. The name is turned into small letters first, because GitHub ignores capitals in
+repo names: `FastAPI/FastAPI` and `fastapi/fastapi` are the same repo, so they share one file
+instead of keeping two copies of the same data. (`fetch_repo` also turns the name into small
+letters before it starts, so the name saved inside the file matches.)
+
+**`find_cache_file(repo)`** decides which file to read: the repo's own cache file if it exists.
+For fastapi/fastapi only, if the new file doesn't exist yet, it falls back to the old
+`cache.json`, so the data we already downloaded keeps working.
+
+**`cache_exists(repo)`**, **`load_cache(repo)`** and **`save_cache(cache)`** check for, read and
+write a repo's cache file. If you leave out `repo`, they use `DEFAULT_REPO` (fastapi/fastapi),
+which is why `metrics.py`, `health.py` and `priority.py` didn't need to change. `save_cache`
+reads the repo name from inside the data, so it always writes to the right file. `indent=2`
+makes the file readable by people too.
+
+**`list_cached_repos()`** looks at the file names in the folder, picks the ones shaped like
+`cache_owner__name.json`, and turns each back into `owner/name`. If the old `cache.json` is
+there, fastapi/fastapi is included too.
 
 **`has_reply(item)`** answers "did a real person other than the author respond?"
 It returns `True` if any comment or review came from a human who isn't the author.
@@ -111,7 +200,12 @@ Bots don't count: many repos have a bot that comments on every new PR within
 seconds, which would make response times look instant when they aren't.
 
 **`print_summary(cache)`** counts issues, PRs and items with a human reply, then
-prints them. If the fetch stopped early, it says so.
+prints them. If the fetch stopped early, it says so. At the end it calls
+`print_label_counts`.
+
+**`print_label_counts(items)`** counts how many items have each label and prints them
+A to Z, so the team can choose priority labels for `config.json` from real data.
+If the cache was made before labels were saved, it says to run `--refresh`.
 
 ## What's in cache.json
 
@@ -124,7 +218,8 @@ prints them. If the fetch stopped early, it says so.
     {
       "number": 16634, "title": "...", "is_pr": true,
       "author": "someone", "author_association": "NONE",
-      "created_at": "2026-10-30T17:03:57Z", "state": "open", "draft": false,
+      "created_at": "2026-10-30T17:03:57Z", "updated_at": "2026-10-30T17:06:17Z",
+      "state": "open", "draft": false, "labels": ["docs"], "body": "first 800 characters...",
       "comments": [{"login": "github-actions[bot]", "user_type": "Bot", "created_at": "..."}],
       "reviews": [{"login": "a-maintainer", "user_type": "User", "state": "APPROVED", "submitted_at": "..."}]
     }
@@ -363,3 +458,128 @@ of its open items haven't had any human answer yet.
 **Limits to mention to judges:** only 15 items are open, so a few items can move the
 unanswered part a lot. Items that were **closed** without any human reply still don't count
 against the score, because the unanswered part only looks at open items.
+
+---
+
+# Stage 5: priority.py, the maintainer queues
+
+`python3 priority.py` answers the maintainer's question "what should I look at next?" It
+reads `cache.json` and `config.json` (no network calls) and sorts open items into three
+queues, each entry with a plain-English reason and a next action.
+
+**Before using it:** run this once, so `cache.json` has the new `labels`, `updated_at` and
+`body` fields:
+
+```
+python3 fetch.py --refresh
+```
+
+Then look at the label counts it prints and put the ones that matter in `config.json`, for
+example `{"priority_labels": ["bug", "security"]}`. Capital letters don't matter.
+
+## The three queues
+
+Only **open** items opened by **humans** are used. Each item goes in **at most one** queue,
+checked in this order (the first rule that matches wins):
+
+1. **Needs attention:** PRs that are drafts, or whose most recent human review asked for
+   changes (`CHANGES_REQUESTED`).
+2. **Newcomer support:** items from newcomers (`FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER` or
+   `NONE`, the same rule as `metrics.py`) that have no human reply or review yet.
+3. **Ready for review:** every other item with no human reply or review yet.
+
+Open items that already got a human answer, and aren't in queue 1, aren't in any queue,
+because someone is already talking to the author. Inside each queue, items with a priority
+label come first, then the longest wait.
+
+## priority.py
+
+**`choose_queue(item)`** checks the three rules above in order and returns the name of the
+first queue that matches, or `None` if the item has already been answered.
+
+**`make_entry(item, config, repo, queue)`** builds the dictionary for one item: number,
+title, author, is_pr, days_waiting (since it was opened), is_newcomer, is_priority, queue,
+reason, next_action and a link to it on GitHub.
+
+**`priority_then_wait(entry)`** tells Python's `sort` what to compare: first "is it
+priority?", then "how many days has it waited?". With `reverse=True`, `True` comes before
+`False` and bigger numbers come first, so priority items are on top, longest wait first.
+
+**`build_queues(items, config, repo)`** goes through every open, human-opened item, asks
+`choose_queue` where it belongs, builds its entry, then sorts each queue. It returns three
+lists: needs attention, newcomer support, ready for review. It takes `repo` as well as
+`items` and `config`, because each entry needs the repo name for its GitHub link.
+
+**`print_queue(name, entries)`** prints a queue's count and its top 5 entries: number, days
+waiting, reason and next action.
+
+**`check_one_queue(queues)`** is a safety check. It goes through all three queues and makes
+sure no item number shows up twice. It prints `Check: each item in only one queue: OK`, or an
+error listing the repeated numbers.
+
+**`main()`** loads both files, builds the queues and prints them.
+
+## priority_helpers.py
+
+**`load_config()`** reads `config.json`. If the file is missing, or has no `priority_labels`
+list, it uses an empty list, so nothing breaks and no item counts as priority.
+
+**`is_newcomer(item)`** uses the newcomer list from `metrics.py`, so both stages always agree
+on who a newcomer is.
+
+**`has_no_answer(item)`** is `True` when no human other than the author has replied **and**
+no human has reviewed. It's built from `first_reply_time` and `first_review_time` in
+`metric_helpers.py`, so bots and the author's own comments are ignored, just like in Stage 2.
+
+**`latest_review_state(item)`** finds the most recent human review (skipping unsubmitted
+`PENDING` ones) and returns its state. Only the latest one matters: if a maintainer asked for
+changes and later approved, the PR no longer needs attention.
+
+**`needs_attention(item)`** is `True` for a PR that is a draft, or whose latest review state
+is `CHANGES_REQUESTED`.
+
+**`priority_labels_found(item, config)`** lowers the capitals on both sides, then returns the
+item's labels that are in the priority list. An old cache with no `labels` field counts as
+no labels.
+
+**`make_reason(item, days)`** builds the reason from facts, for example
+`Waiting 12.0 days, outside contributor, label: bug`. It turns the GitHub association into
+plain words (`NONE` becomes "outside contributor", `MEMBER` becomes "team member", and so on),
+adds "draft" or "changes requested" when true, and lists the labels.
+
+**`next_action(item, is_priority)`** picks one action:
+
+| Situation | Next action |
+|---|---|
+| Draft PR | No action yet; still a draft |
+| Latest review asked for changes | Waiting on the author; ping if no update in 7 days |
+| PR with no human review | Review this PR |
+| Issue from a newcomer, no reply | Welcome and reply to the newcomer |
+| Issue, no reply | Reply to the author |
+
+If the item has a priority label, the action starts with `Priority: `.
+
+## fastapi/fastapi example (old cache, no labels yet)
+
+```
+Needs attention: 0 items
+Newcomer support: 4 items
+  #16368, 44.5 days: Waiting 44.5 days, outside contributor
+      Next: Review this PR
+Ready for review: 3 items
+  #16407, 32.1 days: Waiting 32.1 days, team member
+      Next: Review this PR
+Check: each item in only one queue: OK
+```
+
+The 7 items in the newcomer and ready queues are the same 7 unanswered open items that lower
+the health score's unanswered part, so the two stages agree.
+
+## What this does NOT do
+
+- **No reviewer matching.** It says "Review this PR" but doesn't suggest *who* should
+  review it.
+- **No learning.** The rules are fixed and written by hand. Nothing changes based on what
+  maintainers did before.
+- **No duplicate detection.** Two issues about the same bug show up as two separate entries.
+- It also doesn't look at CI checks, and it only sees the items in `cache.json`.
