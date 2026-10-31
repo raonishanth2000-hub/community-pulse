@@ -1,8 +1,9 @@
-# pulse_tabs.py - What goes inside the Overview, Waiting, Maintainer queues and
-# Contributors tabs of pulse_dashboard.py. (The Health score tab is in pulse_health.py.)
+# pulse_tabs.py - What goes inside the Overview, Waiting, Maintainer queues, Contributors and
+# Weekly digest tabs of pulse_dashboard.py. (Health score and Gemma notes have their own files.)
 
 import streamlit as st
 
+from digest import build_message
 from health import NEWCOMER_POINTS, RESPONSE_POINTS, REVIEW_POINTS, UNANSWERED_POINTS
 from priority import build_queues
 from priority_helpers import load_config
@@ -87,3 +88,20 @@ def contributors_tab(numbers):
         st.altair_chart(funnel_chart(funnel_rows(numbers["funnel"])), width="stretch")
     with right:
         card("Newcomers", str(numbers["retention"]["newcomers"]), "first-time or outside authors", "teal")
+
+
+# The Weekly digest tab: the same summary digest.py posts to Discord, shown here instead.
+# Left: the message as it reads. Right: the plain text with a copy button. Nothing is sent.
+def digest_tab(items, repo):
+    message = build_message(repo, items)
+    st.caption("The quick weekly summary meant for Discord, built from the same numbers as this "
+               "dashboard. Nothing is sent from here.")
+    left, right = st.columns([3, 2], gap="large")
+    with left:
+        with st.container(border=True):
+            # Two spaces before each line break keep the lines apart, like in Discord.
+            st.markdown(message.replace("\n", "  \n"))
+    with right:
+        st.subheader("Copy it")
+        st.caption("Use the copy button (top right of the box) to paste it into any chat by hand.")
+        st.code(message, language=None, wrap_lines=True)

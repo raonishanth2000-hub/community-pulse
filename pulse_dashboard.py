@@ -12,7 +12,7 @@ from pulse_gemma import gemma_tab
 from pulse_health import health_tab
 from pulse_parts import hero, load_css
 from pulse_sidebar import brand, fetch_box, filters, mini_card, repo_picker
-from pulse_tabs import contributors_tab, overview_tab, queues_tab, waiting_tab
+from pulse_tabs import contributors_tab, digest_tab, overview_tab, queues_tab, waiting_tab
 
 
 # Picks which repo to show: one just added in the sidebar, the one picked before, or the default.
@@ -36,7 +36,7 @@ def newcomer_count(rows):
     return count
 
 
-# Builds the whole page: sidebar, banner and the six tabs.
+# Builds the whole page: sidebar, banner and the seven tabs.
 def main():
     st.set_page_config(page_title="Community Pulse", page_icon="💜", layout="wide")
     load_css()
@@ -60,7 +60,7 @@ def main():
     st.write("")
     rows = filter_rows(all_rows, newcomers_only, kinds or [], min_days, search)
     tabs = st.tabs(["Overview", "Health score", "Waiting (" + str(len(rows)) + ")", "Maintainer queues",
-                    "Contributors", "Gemma notes"])
+                    "Contributors", "Weekly digest", "Gemma notes"])
     with tabs[0]:
         overview_tab(numbers, items)
     with tabs[1]:
@@ -72,6 +72,8 @@ def main():
     with tabs[4]:
         contributors_tab(numbers)
     with tabs[5]:
+        digest_tab(items, repo)
+    with tabs[6]:
         gemma_tab(items, repo)
 
 
