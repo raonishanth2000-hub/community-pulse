@@ -20,13 +20,30 @@ def label_names(raw):
     return names
 
 
-# Gets the first 800 characters of the item's text. In: raw item.
-# Out: the text, or an empty string if the author left it blank.
+# Removes hidden HTML comments like "<!-- Please describe your change -->". Many repos'
+# PR templates start with one, and it isn't shown on GitHub, so it isn't the author's words.
+# In: text. Out: the text without comments. A comment with no end (because the text
+# was cut short) is removed up to the end of the text.
+def remove_html_comments(text):
+    result = ""
+    while True:
+        start = text.find("<!--")
+        if start == -1:
+            return result + text
+        end = text.find("-->", start)
+        if end == -1:
+            return result + text[:start]
+        result = result + text[:start]
+        text = text[end + 3:]
+
+
+# Gets the first 800 characters of the item's own text, after removing hidden comments.
+# In: raw item. Out: the text, or an empty string if the author left it blank.
 def short_body(raw):
     body = raw.get("body")
     if body is None:
         return ""
-    return body[:BODY_LENGTH]
+    return remove_html_comments(body).strip()[:BODY_LENGTH]
 
 
 # Keeps only the fields we need from one issue or PR. In: raw item. Out: small dictionary.

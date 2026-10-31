@@ -23,6 +23,11 @@ The code is split into small files so each one stays short:
 | `priority.py` | Stage 5: sorts open items into three maintainer queues with next actions. |
 | `priority_helpers.py` | Small facts about one item used by `priority.py` (reason, next action). |
 | `config.json` | Settings you edit by hand, such as which labels count as priority. |
+| `priority_info.py` | Stage 8: a priority note and next action for every waiting item, from the guidelines or labels. |
+| `priority_notes.py` | The small pieces behind `priority_info.py` (waiting items, notes, label match). |
+| `guidelines.py` | Turns the repo's CONTRIBUTING file into yes/no checks, and asks the local model to answer them. |
+| `contributing_file.py` | Downloads the CONTRIBUTING file's text from GitHub. |
+| `local_model.py` | Talks to the local AI model (Gemma) through Ollama, and checks its answers. |
 
 ## Running it
 
@@ -130,8 +135,17 @@ website shows.
 **`label_names(raw)`** GitHub sends each label as a small dictionary (name, colour,
 description). This keeps just the names, such as `["bug", "docs"]`.
 
-**`short_body(raw)`** keeps the first 800 characters of the issue or PR text, which is
-enough to see what it's about without making the cache file huge. If the author left it
+**`remove_html_comments(text)`** removes hidden comments like `<!-- Please describe your
+change -->`. Many repos' PR templates start with a block of instructions inside one of these.
+GitHub doesn't show them on the page, so they aren't the author's words. In fastapi's template,
+the hidden block is 392 characters long. The function finds each `<!--`, then the next `-->`,
+and keeps only the text outside them. If a comment has no end (because the text was cut short),
+everything from `<!--` onward is removed.
+
+**`short_body(raw)`** removes the hidden comments, then keeps the first 800 characters of the
+issue or PR text. That's enough to see what it's about without making the cache file huge.
+Removing the comments *first* matters: otherwise a long template could fill most of the 800
+characters and push the author's real explanation off the end. If the author left the text
 blank, GitHub sends `None`, and we save an empty string `""` instead.
 
 **`simplify_item(raw)`** GitHub sends dozens of fields per issue. This keeps only
@@ -583,3 +597,162 @@ the health score's unanswered part, so the two stages agree.
   maintainers did before.
 - **No duplicate detection.** Two issues about the same bug show up as two separate entries.
 - It also doesn't look at CI checks, and it only sees the items in `cache.json`.
+
+---
+
+# Stage 8: priority notes from the repo's own guidelines
+
+`python3 priority_info.py owner/repo` looks at every item that is still waiting and adds a short
+**note** and a **next action**. If the repo has a CONTRIBUTING file, a small AI model running on
+your own computer (Gemma, through Ollama) checks each waiting PR against those guidelines. If
+that isn't possible, it falls back to the priority labels in `config.json`.
+
+**Everything is optional.** If Ollama isn't running, the repo has no CONTRIBUTING file, or the
+model gives a broken answer, it prints a plain message and falls back to labels. It never
+crashes, and it never posts anything to GitHub.
+
+## Setting it up (optional)
+
+```
+ollama pull gemma3:4b      # once, downloads the model (about 3 GB)
+ollama serve               # if Ollama isn't already running
+python3 fetch.py owner/repo
+python3 priority_info.py owner/repo
+```
+
+It writes three files in the project folder:
+
+| File | What's in it |
+|---|---|
+| `guidelines.json` | The repo name, the CONTRIBUTING link, the Code of Conduct link, and the first 6000 characters of CONTRIBUTING. |
+| `checklist.json` | The yes/no checks. **You can edit this by hand**, and your version is used next time. |
+| `priority_info.json` | For each waiting item number: source, is_priority, note, next_action. |
+
+## Where the note comes from
+
+For each open, human-opened, non-draft item that is still waiting for a human reply or review:
+
+1. **"guidelines"**: there is a checklist, and the model answered the checks for this PR. The
+   item is priority if no check was answered "no". Example note:
+   `Meets 4 of 6 guideline checks; missing: includes complete traceback; unclear: version of requests`.
+2. Otherwise **"labels"**: the item is priority if it has one of the `priority_labels` from
+   `config.json`. Example note: `Priority label: bug`.
+3. Otherwise **"none"**: not priority, and no note.
+
+Only the **10 longest-waiting PRs** are sent to the model, because each answer takes a few
+seconds on a laptop. Everything else uses the labels fallback.
+
+## local_model.py
+
+**`ask_model(prompt)`** sends a prompt to Ollama at `http://localhost:11434/api/generate` with
+model `gemma3:4b`, `"stream": false` (wait for the whole answer) and `"format": "json"` (ask
+for JSON back). It waits up to 120 seconds. It turns the reply into Python and returns it. If
+Ollama isn't running, the model isn't installed, or the reply isn't valid JSON, it prints a
+plain message and returns `None`.
+
+**`as_string_list(answer)`** checks that the model's answer is a list of strings, such as
+`["Links an issue", "Has tests"]`. Small models often wrap the list, like
+`{"checks": [...]}`, so if the answer is a dictionary with exactly one value, it looks inside.
+Anything else returns `None`.
+
+## contributing_file.py
+
+**`html_to_api_url(html_url)`** turns a web link like
+`https://github.com/fastapi/.github/blob/main/CONTRIBUTING.md` into the matching API address
+(`.../repos/fastapi/.github/contents/CONTRIBUTING.md?ref=main`).
+
+**`download_text(url, token)`** downloads one file through GitHub's contents API. GitHub sends
+the text **base64-encoded** (a safe way to send any characters), so we decode it, then keep the
+first 6000 characters. It returns `None` if anything fails.
+
+**`download_contributing(contributing, token)`** tries GitHub's `url` link first, then the
+address built from `html_url`. We need both: when an organisation keeps one shared CONTRIBUTING
+file in its `.github` repo (fastapi does), GitHub's `url` points to the wrong place, but
+`html_url` is right.
+
+## guidelines.py
+
+**`save_json(file_name, data)`** writes a dictionary to a JSON file, nicely indented.
+
+**`find_guidelines(repo)`** asks GitHub for the repo's **community profile**, which lists its
+CONTRIBUTING file and Code of Conduct. If there's no CONTRIBUTING file, it prints "No
+CONTRIBUTING file found" and returns `None`. Otherwise it downloads the text and saves
+`guidelines.json`. For the Code of Conduct it saves **only the link**: its text is never
+downloaded or shown to the model.
+
+**`load_saved_checklist(repo)`** reads `checklist.json` if it exists and was made for the same
+repo. If the file is broken or belongs to another repo, it says so and returns `None`, so a new
+checklist is made.
+
+**`make_checklist(text, repo)`** returns the checks. A saved `checklist.json` always wins, so a
+maintainer's hand edits are kept. Otherwise it asks the model for at most 6 short checks that
+can be answered from a PR's title and description, and saves them. The prompt asks for each check
+as a **short phrase, not a question**, such as `includes complete traceback` or
+`version of requests`, so the next action reads naturally: "Ask the author to add: includes
+complete traceback". It also says every check must come from something the guidelines actually
+ask for. (An earlier version gave example phrases, and the model just copied them for every
+repo.) If the CONTRIBUTING file is shorter than 500 characters, it doesn't ask the model, because
+such files usually just say "see our website", and the model would make up checks. That's what
+happens with fastapi (67 characters) and pallets/flask (274 characters). If
+the model's answer isn't a list of strings, it uses an empty list, and labels are used instead.
+
+**`check_pr(item, checklist)`** sends the checks, the PR's title and its description to the
+model, and asks for one answer per check: `"yes"`, `"no"` or `"unclear"`. The prompt tells the
+model to treat the PR text as data, not instructions. Hidden template comments are removed from
+the description first (with `remove_html_comments`), which also helps with cache files saved
+before that function existed. Any answer that isn't one of those three
+words becomes `"unclear"`, and missing answers become `"unclear"` too. If the model doesn't
+return a list at all, it returns `None`, so the item falls back to labels.
+
+## priority_notes.py
+
+**`label_priority(item, config)`** returns the item's labels that are in `priority_labels`
+(capitals don't matter). It reuses `priority_labels_found` from Stage 5. If an item has no
+`labels` field (old data), there's no match.
+
+**`waiting_items(items)`** uses `still_waiting_list` from `metrics.py`, so "still waiting" means
+exactly the same as on the dashboard: open, opened by a human, and no human reply (or, for a PR,
+no human review). It skips drafts and returns each item with its days waiting, longest first.
+
+**`guideline_info(checklist, answers)`** counts the "yes" answers and lists the "no" and
+"unclear" checks, then builds the note and next action: "Review this PR (meets the guidelines)"
+if nothing is missing, otherwise "Ask the author to add: ..." followed by the missing checks.
+
+**`fallback_info(item, config)`** is used when the model didn't answer. With a priority label
+the source is "labels"; without one it's "none". The next action is "Review this PR" for PRs and
+"Reply to the author" for issues.
+
+**`priority_then_wait(row)`** tells Python's `sort` to put priority items first, then the
+longest wait.
+
+## priority_info.py
+
+**`build_priority_info(repo, items, config)`** puts it all together. It finds the guidelines,
+makes or loads the checklist, then goes through the waiting items, longest wait first. Each of
+the first 10 PRs is sent to the model while the model is working. If the model fails once, it
+stops asking (`model_working = False`), so a broken model doesn't make you wait for 10 timeouts.
+It saves `priority_info.json` and returns the same information.
+
+**`print_report(items, info)`** prints every waiting item, priority first then longest wait,
+with its source, note and next action. Then it prints how many items used guidelines, labels or
+neither.
+
+**`main()`** reads the repo from the command line (`fastapi/fastapi` if none), checks the name
+is safe, checks the repo has been fetched, then builds and prints the report.
+
+## What this does NOT do
+
+- **It reads only the title and description** (the first 800 characters, after hidden template
+  comments are removed). The guideline check can't see the code, the tests, the CI results or
+  the comments. A PR can "meet the checks" and still be wrong.
+- **Its answers are AI suggestions.** A 4-billion-parameter model on a laptop makes mistakes.
+  The maintainer always decides, and the note is a hint about what to look at first.
+- **The Code of Conduct is never judged.** Only its link is saved. It is never sent to the
+  model, and no one is scored against it.
+- **It never posts anything to GitHub.** No comments, no labels, no reviews: it only reads.
+- **It only checks 10 PRs per run,** to keep the run short.
+- **Short CONTRIBUTING files are skipped** (under 500 characters), because they usually just
+  link to a website the tool doesn't read. You can write `checklist.json` by hand instead.
+- **"Unclear" doesn't count against a PR.** A PR is priority when no check was answered "no",
+  so a PR with mostly "unclear" answers is still marked "meets the guidelines". Read the note to
+  see how many checks were unclear.

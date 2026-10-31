@@ -9,3 +9,6 @@ __pycache__/
 cache_*.json
 # ...except this one demo snapshot, so the hosted dashboard has data to show
 !cache_fastapi__fastapi.json
+# Outputs of priority_info.py (Gemma notes), re-created on every run
+guidelines.json
+priority_info.json
