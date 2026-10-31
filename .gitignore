@@ -7,3 +7,5 @@ __pycache__/
 .DS_Store
 # One cache file per repo, re-created with: python3 fetch.py owner/repo --refresh
 cache_*.json
+# ...except this one demo snapshot, so the hosted dashboard has data to show
+!cache_fastapi__fastapi.json
