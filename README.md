@@ -44,7 +44,7 @@ under 50 **At risk**.
 | Tab | What it shows |
 |---|---|
 | **Overview** | The four metrics, the parts of the health score, and a chart of how fast people hear back. |
-| **Health score** | How each part is worked out, and a **What if?** panel: move sliders to see how the score would change. |
+| **Health score** | Each part of the score, with a button that shows the real number behind it and the rule, and how the parts add up to the total. |
 | **Waiting** | Every open item still waiting for a reply or review, longest first, with links. |
 | **Maintainer queues** | Three to-do lists: *Newcomer support*, *Ready for review* and *Needs attention*. |
 | **Contributors** | A funnel: who opened an issue, who opened a PR, who came back. |

@@ -21,9 +21,8 @@ except for the optional **"Add a repo"** box, which downloads a new repo with yo
 - **Overview tab.** Four number cards, the four parts of the health score as bars, and a chart
   of how fast people got their first human reply.
 - **Health score tab.** Each part of the score with a **"How is this worked out?"** button that
-  shows the real number behind it and the rule. Next to it is a **"What if?"** panel: four sliders
-  that change the inputs (first-reply time, review time, newcomers stuck, unanswered items) and
-  show straight away what the score would become, and by how much.
+  shows the real number behind it and the rule. Next to it, **"How it adds up"** shows the total
+  and the points from each part.
 - **Waiting tab.** A sortable table of every open item still waiting, with a bar showing how
   long, a link to GitHub, and who is waiting. The tab name shows the count after filtering.
 - **Maintainer queues tab.** The three queues from `priority.py` as cards, each with its reason
@@ -127,24 +126,10 @@ nobody has answered).
 (for example "Open items with no human reply or review at all: **43%**") and the rule that turns
 it into points.
 
-**`start_value(value, stand_in, largest)`** picks where a slider starts: today's real number
-rounded to a whole number, or a stand-in when there's no data.
+**`total_column(score, parts)`** shows the total score and the points from each of the four
+parts, added up, plus the bands: 80 or more is Healthy, 50 to 79 Needs care, under 50 At risk.
 
-**`slider_score(first, review, stuck, unanswered)`** works out a score from the four slider
-numbers, using `sliding_points` and `share_points` from `health_helpers.py`.
-
-**`what_if_column(inputs, real_score, repo)`** draws the four sliders and the result. Sliders only
-move in whole numbers, so their starting positions are slightly rounded (4.48% starts at 4%). If
-we simply scored the slider values, the panel would show a small difference before you touched
-anything. Instead it works out the **change** the sliders make (`slider_score` now minus
-`slider_score` at the starting positions) and adds it to today's real score. Untouched sliders
-therefore always show exactly today's score, and the change is grey; it turns green when the score
-goes up and red when it goes down. Each slider has a `key` that includes the repo name, so every
-repo keeps its own slider positions. Nothing is saved.
-
-**`percent_number(share)`** turns a share like 0.43 into 43, leaving "no data" (`None`) alone.
-
-**`health_tab(items, numbers, repo)`** puts the parts on the left and "What if?" on the right.
+**`health_tab(items, numbers)`** puts the parts on the left and the total on the right.
 
 ## pulse_sidebar.py
 

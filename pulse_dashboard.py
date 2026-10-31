@@ -64,7 +64,7 @@ def main():
     with tabs[0]:
         overview_tab(numbers, items)
     with tabs[1]:
-        health_tab(items, numbers, repo)
+        health_tab(items, numbers)
     with tabs[2]:
         waiting_tab(rows)
     with tabs[3]:
