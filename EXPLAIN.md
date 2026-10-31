@@ -756,3 +756,44 @@ is safe, checks the repo has been fetched, then builds and prints the report.
 - **"Unclear" doesn't count against a PR.** A PR is priority when no check was answered "no",
   so a PR with mostly "unclear" answers is still marked "meets the guidelines". Read the note to
   see how many checks were unclear.
+
+# The weekly Discord digest: digest.py
+
+`python3 digest.py [owner/repo] [--dry-run]` builds a short weekly message from the saved cache
+and posts it to a Discord channel. With `--dry-run` it only prints the message and sends nothing,
+so always try that first.
+
+## What the message says
+
+- The health score and its word (Healthy, Needs care, At risk).
+- The median first reply and the median PR review wait.
+- How many open items are still waiting, and how many of those are from newcomers.
+- How many newcomers came back within 30 days.
+- The 5 items waiting longest, **newcomers first**, each with a link.
+
+The numbers come from the same functions as the dashboard (`pulse_data.py`), so the digest and
+the dashboard always agree.
+
+## The functions
+
+**`item_line(row)`** turns one waiting item into a line. Long titles are shortened to 70
+characters. Links are wrapped in `< >` so Discord doesn't add a big preview under each one.
+
+**`build_message(repo, items)`** builds the whole message. If it would be longer than Discord's
+2,000-character limit, it is cut short.
+
+**`read_webhook()`** reads `DISCORD_WEBHOOK_URL` from `.env`. It checks that the address really is
+a Discord webhook, and it never prints the address.
+
+**`send_message(webhook, message)`** posts the message. It turns mentions off
+(`allowed_mentions`), so an issue titled "@everyone" can't ping the whole server. If Discord
+says no, it prints only the error number.
+
+**`main()`** reads the repo and `--dry-run`, checks the name is safe and the repo has been fetched,
+then prints or sends the digest.
+
+## What this does NOT do
+
+- **It doesn't fetch.** Run `python3 fetch.py owner/repo --refresh` first for fresh numbers.
+- **It doesn't run by itself every week.** Run it by hand, or schedule it (for example with cron).
+- **It never posts anything to GitHub.** It only reads the saved cache, and posts only to Discord.
