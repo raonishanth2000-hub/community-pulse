@@ -1,0 +1,11 @@
+# Colours for Streamlit's own buttons, sliders and tables, matching pulse_style.css.
+[theme]
+base = "dark"
+primaryColor = "#8b7cff"
+backgroundColor = "#0b0d1c"
+secondaryBackgroundColor = "#14172e"
+textColor = "#e8e9f5"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

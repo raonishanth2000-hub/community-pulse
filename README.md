@@ -55,10 +55,11 @@ maintainer **priority queues** (`python3 priority.py`).
    python3 fetch.py owner/repo --refresh
    ```
 
-5. Open the dashboard:
+5. Open the dashboard. It opens in your browser at `http://localhost:8501`, and you can add more
+   repos from its sidebar:
 
    ```
-   streamlit run dashboard.py
+   streamlit run pulse_dashboard.py
    ```
 
 6. Preview the weekly Discord digest without sending it:
@@ -102,6 +103,7 @@ only in `.env`, never in the code or in git.
 ## Learn more
 
 `EXPLAIN.md` is a plain-English tour of every file and function, written for beginners.
+`EXPLAIN_pulse_dashboard.md` does the same for the dashboard, including its colours and animations.
 
 ## License
 

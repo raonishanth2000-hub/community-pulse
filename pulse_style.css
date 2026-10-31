@@ -1,0 +1,139 @@
+/* pulse_style.css - the look of pulse_dashboard.py. Colours live in one place (:root),
+   and every rule below uses them by name. The chart colours were checked for
+   colour-blind safety and contrast against the dark surface. */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --ink: #0b0d1c;          /* page background */
+  --surface: #14172e;      /* cards */
+  --surface-2: #1b1f3b;    /* raised parts of cards */
+  --line: #2a2f55;         /* borders */
+  --text: #e8e9f5;
+  --muted: #9a9fc4;
+  --violet: #8b7cff;       /* brand + series 1 */
+  --violet-soft: #c2b8ff;
+  --amber: #cf7f26;        /* series 2 */
+  --teal: #16a07f;         /* series 3 */
+  --good: #2bb673;
+  --warning: #fab219;
+  --critical: #e5534b;
+}
+
+html, body, [class*="css"], .stMarkdown, .stText { font-family: 'Inter', sans-serif; }
+h1, h2, h3, .pulse-hero h1 { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.01em; }
+.block-container { padding-top: 3.5rem; max-width: 1240px; }
+
+/* Hero banner: repo name, date range and the health ring */
+.pulse-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  padding: 24px 28px; border-radius: 20px; border: 1px solid var(--line);
+  background: radial-gradient(circle at 0% 0%, rgba(139,124,255,0.22), transparent 55%),
+              radial-gradient(circle at 100% 100%, rgba(22,160,127,0.16), transparent 50%), var(--surface);
+}
+.pulse-hero h1 { margin: 0; font-size: 2.1rem; color: var(--text); }
+.pulse-eyebrow { color: var(--violet-soft); font-size: 0.78rem; font-weight: 600;
+                 text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 4px; }
+.pulse-sub { color: var(--muted); margin-top: 6px; font-size: 0.95rem; }
+
+/* Health ring: a conic gradient filled to the score. --fill and --num are registered
+   below so the browser can animate them: the ring fills up and the number counts up. */
+@property --fill { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --num { syntax: '<integer>'; inherits: false; initial-value: 0; }
+.pulse-ring { width: 128px; height: 128px; border-radius: 50%; display: grid; place-items: center;
+              background: conic-gradient(var(--ring-color) calc(var(--fill) * 1%), var(--surface-2) 0);
+              animation: ring-fill 1.4s cubic-bezier(.2, .8, .2, 1) forwards,
+                         ring-beat 3.2s ease-in-out 1.6s infinite; }
+@keyframes ring-fill { to { --fill: var(--score); } }
+/* After filling, the ring gives a slow, soft "heartbeat" glow. */
+@keyframes ring-beat {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ring-color) 0%, transparent); }
+  50%      { box-shadow: 0 0 0 10px color-mix(in srgb, var(--ring-color) 14%, transparent); }
+}
+.pulse-ring-inner { width: 100px; height: 100px; border-radius: 50%; background: var(--surface);
+                    display: grid; place-items: center; text-align: center; }
+.pulse-ring-score { font-family: 'Space Grotesk', sans-serif; font-size: 2rem; font-weight: 700; color: var(--text); line-height: 1;
+                     counter-reset: num var(--num); animation: count-up 1.4s cubic-bezier(.2, .8, .2, 1) forwards; }
+.pulse-ring-score::after { content: counter(num); }
+@keyframes count-up { to { --num: var(--target); } }
+.pulse-ring-label { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+
+/* Number cards */
+.pulse-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+              padding: 18px 20px; min-height: 138px; border-top: 3px solid var(--accent);
+              animation: rise .45s ease-out backwards; transition: transform .2s, box-shadow .2s; }
+.pulse-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0, 0, 0, .28); }
+/* Cards and items gently rise into place when the page loads. */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.pulse-card-title { color: var(--muted); font-size: 0.85rem; font-weight: 500; }
+.pulse-card-value { font-family: 'Space Grotesk', sans-serif; font-size: 2rem; font-weight: 700; color: var(--text); margin: 6px 0 2px; }
+.pulse-card-note { color: var(--muted); font-size: 0.8rem; }
+
+/* Health score parts as thin bars */
+.pulse-bar-row { margin: 10px 0 14px; }
+.pulse-bar-top { display: flex; justify-content: space-between; color: var(--text); font-size: 0.9rem; }
+.pulse-bar-top span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pulse-bar { height: 8px; border-radius: 4px; background: var(--surface-2); margin-top: 6px; overflow: hidden; }
+.pulse-bar > div { height: 100%; border-radius: 4px; background: var(--violet);
+                    transform-origin: left; animation: bar-grow .9s cubic-bezier(.2, .8, .2, 1) backwards; }
+/* Bars grow from the left when the page loads. */
+@keyframes bar-grow { from { transform: scaleX(0); } }
+
+/* Status chip (always icon + word, never colour alone) */
+.pulse-chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+              border: 1px solid var(--chip); color: var(--chip); background: rgba(255,255,255,0.03); }
+
+/* Queue cards */
+.pulse-queue-head { font-family: 'Space Grotesk', sans-serif; font-size: 1.05rem; color: var(--text); margin-bottom: 8px; }
+.pulse-item { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+              border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+              animation: rise .45s ease-out backwards; transition: transform .2s, border-color .2s; }
+.pulse-item:hover { transform: translateX(3px); border-color: var(--accent); }
+.pulse-item a { color: var(--text); text-decoration: none; font-weight: 600; }
+.pulse-item a:hover { color: var(--violet-soft); text-decoration: underline; }
+.pulse-item-meta { color: var(--muted); font-size: 0.8rem; margin-top: 4px; }
+.pulse-item-action { color: var(--violet-soft); font-size: 0.82rem; margin-top: 6px; }
+.pulse-empty { color: var(--muted); font-size: 0.9rem; padding: 12px 0; }
+
+/* Hide Streamlit's "Press Enter to apply" hint under text boxes; the buttons make it clear */
+[data-testid="InputInstructions"] { display: none; }
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] { gap: 6px; }
+.stTabs [data-baseweb="tab"] { border-radius: 10px 10px 0 0; padding: 8px 16px; }
+
+/* Sidebar: brand with a beating dot, section titles, the mini health card, the filter badge */
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top: 0.5rem; }
+.pulse-brand { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 1.2rem;
+               color: var(--text); display: flex; align-items: center; gap: 10px;
+               padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.pulse-section { display: flex; align-items: center; justify-content: space-between;
+                 color: var(--muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.12em;
+                 text-transform: uppercase; margin: 12px 0 2px; }
+.pulse-divider { height: 1px; background: var(--line); margin: 14px 0 4px; }
+.pulse-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--teal);
+             animation: dot-beat 2.4s ease-in-out infinite; }
+@keyframes dot-beat { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: .55; } }
+.pulse-side-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px;
+                   padding: 12px 14px; margin: 0 0 10px; animation: rise .45s ease-out backwards;
+                   transition: border-color .2s; }
+.pulse-side-card:hover { border-color: var(--violet); }
+.pulse-side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pulse-side-score { font-family: 'Space Grotesk', sans-serif; font-size: 1.6rem; font-weight: 700; color: var(--text); }
+.pulse-side-score small { font-size: .8rem; color: var(--muted); font-weight: 500; margin-left: 2px; }
+.pulse-side-note { color: var(--muted); font-size: .8rem; margin-top: 8px; }
+.pulse-count { font-family: 'Inter', sans-serif; font-size: .7rem; font-weight: 700; color: var(--ink);
+               letter-spacing: 0; text-transform: none;
+               background: var(--violet); border-radius: 999px; padding: 2px 8px;
+               animation: rise .3s ease-out backwards; }
+
+/* People who ask their computer for less motion get no animation at all, just the final state. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .pulse-ring { --fill: var(--score); }
+  .pulse-ring-score { --num: var(--target); }
+}
+
+@media (max-width: 640px) {
+  .pulse-hero { padding: 18px; }
+  .pulse-hero h1 { font-size: 1.6rem; }
+}
